@@ -11,7 +11,8 @@ flowchart LR
     U[👤 Usuario<br/>navegador] -->|1. mensaje| W[Página web<br/>+ API /api/chat]
     W --> A[🤖 Agente ASISTENTE]
     A -->|2. herramienta 'traducir'<br/>mensaje A2A| T[🤖 Agente TRADUCTOR<br/>servidor A2A /a2a/translator]
-    T -->|3. buscar_en_catalogo| C[(📄 catalogo.md)]
+    T -->|3. buscar| C[(📄 catalogo.md<br/>500 palabras)]
+    T -.->|3b. solo si no está| X[(🌐 pueblosoriginarios.com<br/>caché 24 h)]
     A -.->|razonar| F[(Microsoft Foundry<br/>gpt-5-mini)]
     T -.->|razonar| F
     A --> J[(📊 usage.json<br/>consumo de tokens)]
@@ -29,8 +30,8 @@ flowchart LR
 
 1. El usuario escribe *"¿cómo se dice perro?"*. La página lo envía a `/api/chat`.
 2. El **asistente** entiende que es una traducción y usa su herramienta `traducir`, que envía un **mensaje A2A** al traductor.
-3. El **traductor** llama a `buscar_en_catalogo(["perro"])`. Esa búsqueda la hace **Python** (no la IA), así que es exacta y no gasta tokens.
-4. El traductor responde por A2A con el resultado (`perro (es) → peek'`), y el asistente se lo presenta al usuario.
+3. El **traductor** llama a `buscar(["perro"])`. Esa búsqueda la hace **Python** (no la IA), así que es exacta y no gasta tokens. Si la palabra no está en el catálogo, Python la busca en la fuente de respaldo autorizada (`ALLOWED_SOURCES`), descargada una vez y guardada en memoria 24 h.
+4. El traductor responde por A2A con traducción, significado, frase de ejemplo y fuente; el asistente lo redacta de forma cálida para el usuario.
 5. Cada agente anota sus tokens en `usage.json`. La página muestra el consumo actualizado.
 
 ## 2. Componentes
@@ -39,8 +40,10 @@ flowchart LR
 |---|---|---|
 | Configuración | `app/config.py` | Lee todas las variables de entorno (`.env`). Nada depende de una cuenta fija. |
 | Cliente del modelo | `app/llm.py` | Crea la conexión a Foundry. Permite 3 modos: `foundry` (identidad), `key` (API key) o `fake` (simulado). |
-| Catálogo | `app/catalog.py` + `data/catalogo.md` | Lee la tabla Markdown y busca palabras ignorando acentos, mayúsculas y variantes del saltillo. |
-| Agente traductor | `app/translator_agent.py` | Agente con la herramienta `buscar_en_catalogo`, publicado como **servidor A2A** con su *Agent Card*. |
+| Catálogo | `app/catalog.py` + `data/catalogo.md` | Lee las tablas Markdown (500 palabras) y busca ignorando acentos, mayúsculas y el saltillo. |
+| Fuente de respaldo | `app/external_sources.py` | Descarga solo las URLs autorizadas, extrae los pares maya–español y busca con Python. |
+| Límite anti-bots | `app/rate_limit.py` | Máximo de mensajes por minuto y por hora por IP. |
+| Agente traductor | `app/translator_agent.py` | Agente con la herramienta `buscar`, publicado como **servidor A2A** con su *Agent Card*. |
 | Agente asistente | `app/assistant_agent.py` | Agente que conversa; su herramienta `traducir` es un **cliente A2A** del traductor. |
 | Registro de consumo | `app/usage_store.py`, `app/tracking.py` | Guarda tokens por agente, por sesión, por día e histórico en un JSON. |
 | Web y API | `app/main.py`, `app/static/index.html` | FastAPI: página, `/api/chat`, `/api/usage`, límites y clave de acceso. |
@@ -65,7 +68,8 @@ flowchart LR
 | Modelo `gpt-5-mini` con razonamiento `minimal` | Modelo económico y con pocos tokens de "pensamiento". |
 | `MAX_OUTPUT_TOKENS=600` | Tope a cada respuesta. |
 | `HISTORY_TURNS=2` | Solo se reenvían los últimos 2 turnos de conversación. |
-| Límites por sesión y por día + clave de acceso | Nadie puede gastar los créditos sin control. |
+| Límites por sesión, por día y por IP + clave de acceso | Nadie (ni un bot) puede gastar los créditos sin control. |
+| Fuente externa consultada por Python, no por la IA | La página de 1.2 MB nunca entra al modelo; solo 1–3 líneas encontradas. |
 | Un solo App Service (plan F1 gratuito) | Ambos agentes comparten servidor: no se paga doble hospedaje. |
 | Sin base de datos | Un archivo JSON en `/home/data` (carpeta persistente de App Service). |
 
@@ -83,7 +87,8 @@ Todo está en variables de entorno; la lista completa y comentada está en [`.en
 
 - **Sin secretos en el repositorio:** `.env` está en `.gitignore`. En Azure, la app usa **identidad administrada** para hablar con Foundry: no hay API keys que robar.
 - **Clave de acceso** (`APP_ACCESS_KEY`) para usar el chat y **clave interna** para el A2A.
-- **Sin internet** por defecto. Si se configuran `ALLOWED_SITES`, el traductor solo puede leer páginas `https://` de esos dominios.
+- **Internet restringido:** el traductor solo puede leer las URLs `https://` de `ALLOWED_SOURCES` (hoy, pueblosoriginarios.com). Vacío = sin internet.
+- **Anti-bots:** límite de mensajes por IP (`RATE_LIMIT_PER_MINUTE`, `RATE_LIMIT_PER_HOUR`), en memoria. Para varias instancias, moverlo a Azure Front Door o API Management.
 
 ## Despliegue en Azure App Service
 
@@ -95,21 +100,22 @@ Recursos usados:
 | Grupo de recursos | `rg-osw_ariel-ia-3954` | |
 | Recurso Foundry / proyecto | `osw-ariel-ia-0227-resource` / `osw-ariel-ia-0227` | North Central US |
 | Modelo | despliegue `gpt-5-mini` | Global Standard, pago por uso |
-| App Service | plan Linux **F1** (gratis), Python 3.12 | identidad administrada con rol *Azure AI User* |
+| App Service | `traductor-maya-osw27`, plan Linux **F1** (gratis) en **Mexico Central**, Python 3.12 | identidad administrada con rol *Foundry User* (antes "Azure AI User"). F1 no tenía cuota en North Central US. |
 
 Pasos (desde Azure Cloud Shell, ver también [`desplegar-app-service.prompt.md`](../.github/prompts/desplegar-app-service.prompt.md)):
 
 ```bash
 git clone https://github.com/<usuario>/<repo>.git && cd <repo>
-APP=traductor-maya-$RANDOM; RG=rg-osw_ariel-ia-3954
-az webapp up -n $APP -g $RG -l northcentralus --runtime PYTHON:3.12 --sku F1
+APP=traductor-maya-osw27; RG=rg-osw_ariel-ia-3954
+az webapp up -n $APP -g $RG -l mexicocentral --runtime PYTHON:3.12 --sku F1   # F1 no tenía cuota en northcentralus
 az webapp identity assign -n $APP -g $RG
 # Rol para que la app use Foundry sin claves
 az role assignment create --assignee $(az webapp identity show -n $APP -g $RG --query principalId -o tsv) \
-  --role "Azure AI User" --scope $(az cognitiveservices account show -n osw-ariel-ia-0227-resource -g $RG --query id -o tsv)
+  --role "Foundry User" --scope $(az cognitiveservices account show -n osw-ariel-ia-0227-resource -g $RG --query id -o tsv)
 az webapp config appsettings set -n $APP -g $RG --settings LLM_PROVIDER=foundry \
   FOUNDRY_PROJECT_ENDPOINT=<endpoint> ASSISTANT_MODEL=gpt-5-mini TRANSLATOR_MODEL=gpt-5-mini \
-  DATA_DIR=/home/data PORT=8000 A2A_INTERNAL_KEY=<clave-larga> APP_ACCESS_KEY=<clave> SCM_DO_BUILD_DURING_DEPLOYMENT=true
+  DATA_DIR=/home/data PORT=8000 A2A_INTERNAL_KEY=<clave-larga> APP_ACCESS_KEY=<clave> SCM_DO_BUILD_DURING_DEPLOYMENT=true \
+  ALLOWED_SOURCES=https://pueblosoriginarios.com/lenguas/mayas.php
 az webapp config set -n $APP -g $RG --startup-file "startup.sh"
 ```
 
@@ -119,7 +125,7 @@ az webapp config set -n $APP -g $RG --startup-file "startup.sh"
 - **Traductor separado:** desplegarlo en otro servicio y cambiar `TRANSLATOR_A2A_URL`.
 - **Base de datos:** reemplazar `UsageStore` (un solo archivo) por Azure Table Storage o Cosmos DB.
 - **Catálogo más grande:** pasar del `.md` a Azure AI Search si crece a miles de palabras.
-- **Interfaz bilingüe:** los textos de la página están en un solo archivo para traducirlos.
+- **Reactivar inglés:** `ENABLED_LANGS=es,maya,en` (el catálogo ya trae la columna Inglés) y ajustar las instrucciones del asistente.
 
 ## Glosario
 

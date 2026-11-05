@@ -6,5 +6,5 @@
 - **Catálogo:** búsqueda determinista en Python (sin tokens). El modelo solo interpreta y redacta.
 - **Consumo:** subclase `TrackedAgent` registra `usage_details` en `usage.json`; el id de sesión viaja en los metadatos A2A.
 - **Web:** FastAPI + una página HTML con JS mínimo.
-- **Hospedaje:** App Service Linux F1 + identidad administrada (rol *Azure AI User*).
+- **Hospedaje:** App Service Linux F1 + identidad administrada (rol *Foundry User*).
 - **Pruebas:** pytest con modelo simulado (`LLM_PROVIDER=fake`).

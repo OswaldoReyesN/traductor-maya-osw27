@@ -62,7 +62,11 @@ class Settings:
 
     # --- Catálogo e internet --------------------------------------------------
     catalog_path: Path = field(default_factory=lambda: Path(os.getenv("CATALOG_PATH", str(BASE_DIR / "data" / "catalogo.md"))))
-    allowed_sites: list[str] = field(default_factory=lambda: _list("ALLOWED_SITES"))
+    # Idiomas activos. Por ahora solo español ↔ maya; agrega "en" para reactivar inglés.
+    enabled_langs: tuple[str, ...] = field(default_factory=lambda: tuple(_list("ENABLED_LANGS") or ["es", "maya"]))
+    # URLs (https) que el traductor puede consultar si una palabra no está en el catálogo.
+    # Vacío = sin internet.
+    allowed_sources: list[str] = field(default_factory=lambda: _list("ALLOWED_SOURCES"))
 
     # --- Consumo y costos ------------------------------------------------------
     data_dir: Path = field(default_factory=lambda: Path(os.getenv("DATA_DIR", str(BASE_DIR / "data" / "runtime"))))
@@ -75,6 +79,9 @@ class Settings:
     max_messages_per_session: int = field(default_factory=lambda: _int("MAX_MESSAGES_PER_SESSION", 30))
     max_tokens_per_session: int = field(default_factory=lambda: _int("MAX_TOKENS_PER_SESSION", 40000))
     max_tokens_per_day: int = field(default_factory=lambda: _int("MAX_TOKENS_PER_DAY", 300000))
+    # Límite por IP para evitar que un bot sature la página
+    rate_limit_per_minute: int = field(default_factory=lambda: _int("RATE_LIMIT_PER_MINUTE", 8))
+    rate_limit_per_hour: int = field(default_factory=lambda: _int("RATE_LIMIT_PER_HOUR", 60))
 
     @property
     def translator_url(self) -> str:

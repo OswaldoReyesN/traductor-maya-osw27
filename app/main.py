@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from agent_framework import Message
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -15,6 +15,8 @@ from pydantic import BaseModel, Field
 from .assistant_agent import TranslatorConnection, build_assistant
 from .catalog import Catalog
 from .config import settings
+from .external_sources import ExternalSources
+from .rate_limit import RateLimiter, client_ip
 from .tracking import current_session
 from .translator_agent import build_a2a_app
 from .usage_store import UsageStore
@@ -23,7 +25,9 @@ log = logging.getLogger("traductor_maya")
 STATIC = Path(__file__).parent / "static"
 
 usage = UsageStore(settings.data_dir, settings.price_input_per_1m, settings.price_output_per_1m, settings.currency)
-catalog = Catalog.from_markdown(settings.catalog_path)
+catalog = Catalog.from_markdown(settings.catalog_path, settings.enabled_langs)
+external = ExternalSources(settings.allowed_sources)
+limiter = RateLimiter(settings.rate_limit_per_minute, settings.rate_limit_per_hour)
 translator = TranslatorConnection()
 assistant = build_assistant(usage, translator)
 history: dict[str, list[Message]] = {}  # solo en memoria, se pierde al reiniciar
@@ -37,7 +41,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Traductor Maya", lifespan=lifespan, docs_url=None, redoc_url=None)
-app.mount("/a2a/translator", build_a2a_app(catalog, usage))
+app.mount("/a2a/translator", build_a2a_app(catalog, usage, external))
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 
@@ -68,6 +72,8 @@ async def config():
         "max_caracteres": settings.max_input_chars,
         "palabras_en_catalogo": len(catalog),
         "modelo": settings.assistant_model,
+        "idiomas": list(settings.enabled_langs),
+        "fuentes_externas": [s.site for s in external.sources],
     }
 
 
@@ -78,7 +84,10 @@ async def get_usage(session_id: str = "", x_access_key: str | None = Header(defa
 
 
 @app.post("/api/chat")
-async def chat(body: ChatIn, x_access_key: str | None = Header(default=None)):
+async def chat(body: ChatIn, request: Request, x_access_key: str | None = Header(default=None)):
+    wait = limiter.check(client_ip(request.headers, request.client.host if request.client else ""))
+    if wait:
+        raise HTTPException(429, f"Vas muy rápido 🙂 Espera {wait} segundos e inténtalo de nuevo.", headers={"Retry-After": str(wait)})
     _check_access(x_access_key)
     text = body.message.strip()
     sid = body.session_id

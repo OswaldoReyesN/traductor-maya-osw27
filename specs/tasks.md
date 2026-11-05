@@ -9,7 +9,7 @@
 - [x] T7 Página del chat y panel de consumo
 - [x] T8 Clave de acceso y límites
 - [x] T9 Documentación funcional y de arquitectura
-- [ ] T10 Cargar el catálogo oficial de 150–200 palabras
+- [x] T10 Cargar el catálogo (500 palabras con significado y ejemplo)
 - [ ] T11 Publicar en GitHub (repo público)
 - [ ] T12 Desplegar en App Service y probar en vivo
-- [ ] T13 (v2) Interfaz bilingüe y documentación en inglés
+- [ ] T13 (v2) Reactivar inglés, interfaz bilingüe y documentación en inglés

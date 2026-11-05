@@ -20,6 +20,11 @@
   .msg.user { align-self:flex-end; background:var(--me); }
   .msg.bot { align-self:flex-start; border:1px solid var(--line); }
   .msg.err { align-self:center; color:#b3261e; font-size:.9rem; }
+  .typing { color:var(--muted); font-style:italic; }
+  .typing .dots span { display:inline-block; animation: blink 1.2s infinite both; }
+  .typing .dots span:nth-child(2) { animation-delay:.2s; } .typing .dots span:nth-child(3) { animation-delay:.4s; }
+  @keyframes blink { 0%,80%,100% { opacity:.2 } 40% { opacity:1 } }
+  @media (prefers-reduced-motion: reduce) { .typing .dots span { animation:none; } }
   form { display:flex; gap:8px; padding:12px; border-top:1px solid var(--line); }
   input { flex:1; padding:10px 12px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--ink); font-size:1rem; }
   button { padding:10px 16px; border-radius:8px; border:0; background:var(--accent); color:#fff; font-weight:600; cursor:pointer; }
@@ -35,15 +40,15 @@
 <body>
 <header>
   <h1>Traductor Maya 🌽</h1>
-  <small>Español · English · Maaya t'aan — palabras sueltas del catálogo oficial</small>
+  <small>Español ↔ Maya yucateco — aprende palabras con su significado y un ejemplo</small>
 </header>
 <main>
   <section class="chat">
     <div id="messages">
-      <div class="msg bot">¡Ba'ax ka wa'alik! Escríbeme una o varias palabras para traducirlas, por ejemplo: <b>¿cómo se dice perro en maya?</b> o <b>what does ja' mean?</b></div>
+      <div class="msg bot">¡Hola! 👋 Te ayudo a aprender palabras en maya yucateco. Pregúntame, por ejemplo: <b>¿cómo se dice perro en maya?</b> o <b>¿qué significa ja'?</b></div>
     </div>
     <form id="form">
-      <input id="input" autocomplete="off" placeholder="Escribe una palabra…" maxlength="300" required>
+      <input id="input" autocomplete="off" placeholder="Escribe una palabra en español o en maya…" maxlength="300" required>
       <button id="send">Enviar</button>
     </form>
   </section>
@@ -62,6 +67,7 @@
     <div class="row"><span>Llamadas al modelo</span><span id="h-calls">0</span></div>
     <div class="row"><span>Costo estimado</span><b id="h-cost">$0</b></div>
     <p class="hint" id="info">Costo estimado = tokens × precio configurado del modelo.</p>
+    <p class="hint">Las frases de ejemplo en maya son un borrador en revisión con hablantes.</p>
   </aside>
 </main>
 <script>
@@ -74,10 +80,21 @@
   const fmt = (n) => Number(n || 0).toLocaleString("es-MX");
   const money = (n) => "$" + Number(n || 0).toFixed(4);
 
+  function escapeHtml(t) { return t.replace(/[&<>"']/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c])); }
   function add(text, cls) {
     const div = document.createElement("div");
-    div.className = "msg " + cls; div.textContent = text;
+    div.className = "msg " + cls;
+    if (cls === "bot") div.innerHTML = escapeHtml(text).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/(^|[\s(«])\*([^*\n]+?)\*/g, "$1<i>$2</i>");
+    else div.textContent = text;
     $("messages").appendChild(div); $("messages").scrollTop = 1e9;
+    return div;
+  }
+  function typing() {
+    const div = document.createElement("div");
+    div.className = "msg bot typing";
+    div.innerHTML = 'Buscando en el catálogo<span class="dots"><span>.</span><span>.</span><span>.</span></span>';
+    $("messages").appendChild(div); $("messages").scrollTop = 1e9;
+    return div;
   }
   function tokens(agent) { return agent ? agent.input + agent.output : 0; }
   function paint(c) {
@@ -103,7 +120,7 @@
   async function init() {
     const cfg = await api("/api/config");
     $("input").maxLength = cfg.max_caracteres;
-    $("info").textContent = `Catálogo: ${cfg.palabras_en_catalogo} palabras · Modelo: ${cfg.modelo}. Costo estimado = tokens × precio configurado.`;
+    $("info").textContent = `Catálogo: ${cfg.palabras_en_catalogo} palabras` + (cfg.fuentes_externas.length ? ` · Respaldo: ${cfg.fuentes_externas.join(", ")}` : "") + ` · Modelo: ${cfg.modelo}. Costo estimado = tokens × precio configurado.`;
     if (cfg.requiere_clave && !accessKey) {
       accessKey = (prompt("Clave de acceso a la app:") || "").trim();
       store.set("key", accessKey);
@@ -114,13 +131,14 @@
     ev.preventDefault();
     const text = $("input").value.trim(); if (!text) return;
     add(text, "user"); $("input").value = ""; $("send").disabled = true;
+    const wait = typing();
     try {
       const data = await api("/api/chat", { method: "POST", body: JSON.stringify({ session_id: sessionId, message: text }) });
       add(data.respuesta, "bot"); paint(data.consumo);
     } catch (e) {
       add(e.message, "err");
       if (!accessKey) { accessKey = (prompt("Clave de acceso a la app:") || "").trim(); store.set("key", accessKey); }
-    } finally { $("send").disabled = false; $("input").focus(); }
+    } finally { wait.remove(); $("send").disabled = false; $("input").focus(); }
   });
   init().catch((e) => add(e.message, "err"));
 </script>

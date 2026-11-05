@@ -1,13 +1,16 @@
 # Traductor Maya 🌽
 
-Chat web con IA que traduce **palabras sueltas** entre **español, inglés y maya yucateco**.
+Chat web con IA que traduce **palabras sueltas** entre **español y maya yucateco**, con significado y frase de ejemplo (el inglés está desactivado por ahora).
 Proyecto del curso *Fundamentos de IA con Tecnologías Microsoft* (Microsoft Foundry).
 
 - Dos agentes que se comunican por **A2A (Agent-to-Agent)**: un **asistente** que conversa y un **traductor** especializado.
-- El traductor solo usa el **catálogo oficial** [`data/catalogo.md`](data/catalogo.md). No inventa traducciones.
+- El traductor usa el **catálogo oficial** [`data/catalogo.md`](data/catalogo.md) (500 palabras) y, solo si falta una palabra, la fuente autorizada [pueblosoriginarios.com](https://pueblosoriginarios.com/lenguas/mayas.php). No inventa traducciones.
+- Límite de mensajes por IP para evitar que un bot sature la página.
 - Panel de **consumo de tokens** (sesión, día e histórico) con **costo estimado**.
 - Sin base de datos: el consumo se guarda en un archivo JSON.
 - Todo es configurable con variables de entorno: puedes cambiar de cuenta de Azure sin tocar el código.
+
+🌐 **En vivo:** https://traductor-maya-osw27.azurewebsites.net (requiere clave de acceso)
 
 📘 Documentación: [Guía funcional](docs/FUNCIONAL.md) · [Arquitectura](docs/ARQUITECTURA.md) · [Especificación](specs/spec.md)
 
@@ -25,7 +28,7 @@ Abre http://localhost:8000. Con `LLM_PROVIDER=fake` el modelo es simulado; la b�
 ## Usar Microsoft Foundry
 
 1. En `.env`: `LLM_PROVIDER=foundry`, `FOUNDRY_PROJECT_ENDPOINT` y el nombre del despliegue (`ASSISTANT_MODEL`, `TRANSLATOR_MODEL`).
-2. Inicia sesión con `az login` (tu usuario necesita el rol **Azure AI User** en el recurso Foundry).
+2. Inicia sesión con `az login` (tu usuario necesita el rol **Foundry User** en el recurso Foundry).
 3. Ejecuta la app igual que arriba.
 
 ## Pruebas

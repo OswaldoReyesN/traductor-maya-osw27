@@ -2,20 +2,23 @@ from pathlib import Path
 
 from app.catalog import Catalog, normalize
 
-CAT = Catalog.from_markdown(Path(__file__).parent.parent / "data" / "catalogo.md")
+CAT = Catalog.from_markdown(Path(__file__).parent.parent / "data" / "catalogo.md", ("es", "maya"))
 
 
-def test_loads_entries():
-    assert len(CAT) >= 10
+def test_loads_all_tables():
+    assert len(CAT) >= 150
 
 
-def test_es_to_maya():
+def test_es_to_maya_with_example():
     r = CAT.lookup("Perro")
-    assert r["encontrada"] and r["resultados"][0]["maya"] == "peek'"
+    e = r["resultados"][0]
+    assert r["encontrada"] and e["maya"] == "peek'"
+    assert e["ejemplo_es"] and e["ejemplo_maya"] and e["explicacion"]
 
 
-def test_accents_and_articles_ignored():
-    assert CAT.lookup("el maiz")["resultados"][0]["maya"] == "ixi'im"
+def test_maya_without_apostrophe():
+    r = CAT.lookup("peek")
+    assert r["encontrada"] and r["resultados"][0]["es"] == "perro"
 
 
 def test_maya_with_curly_apostrophe():
@@ -23,8 +26,13 @@ def test_maya_with_curly_apostrophe():
     assert r["encontrada"] and r["idioma_detectado"] == "maya" and r["resultados"][0]["es"] == "agua"
 
 
-def test_english_synonym():
-    assert CAT.lookup("maize", "en")["resultados"][0]["es"] == "maíz"
+def test_spanish_synonym():
+    assert CAT.lookup("tranquilidad")["resultados"][0]["maya"] == "jets' óolal"
+
+
+def test_english_disabled():
+    assert "en" not in CAT.lookup("perro")["resultados"][0]
+    assert CAT.lookup("dog")["encontrada"] is False
 
 
 def test_not_found_never_invents():

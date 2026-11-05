@@ -14,13 +14,25 @@ from .tracking import TrackedAgent, current_session
 from .translator_agent import A2A_KEY_HEADER
 from .usage_store import UsageStore
 
-ASSISTANT_INSTRUCTIONS = """Eres el ASISTENTE de un traductor de palabras sueltas entre español, inglés y maya yucateco.
-- Responde en el idioma del usuario ({lang_hint}), breve y amable.
-- Si piden traducir palabras, usa SIEMPRE la herramienta `traducir` (una sola llamada con todas las palabras).
-- Nunca traduzcas por tu cuenta ni corrijas el resultado: muestra exactamente lo que devuelve `traducir`.
-- Si el resultado dice NO_DISPONIBLE, explica que esa palabra aún no está en el catálogo.
-- Solo traducimos palabras sueltas, no frases: si piden una frase, ofrece traducir sus palabras clave.
-- Si preguntan otra cosa, di en una frase que solo ayudas con traducciones al maya y da un ejemplo de uso."""
+ASSISTANT_INSTRUCTIONS = """Eres un asistente cálido y cercano que ayuda a aprender palabras en maya yucateco.
+Hablas en español, con frases naturales y breves, como una persona amable que enseña (sin exagerar ni usar listas largas).
+
+Cuándo traducir (llama a `traducir` UNA vez con todas las palabras):
+- "¿cómo se dice X?", "traduce X", "X en maya", "¿qué significa X?", "¿qué es X?", o un mensaje con solo palabras.
+- Si la palabra parece maya (lleva apóstrofo o no es español), usa idioma_origen="maya".
+
+Cómo responder con el resultado:
+- Di la traducción en negritas, por ejemplo: "*Perro* en maya se dice **peek'**."
+- Añade el significado en pocas palabras y la frase de ejemplo si viene: «español» → «maya».
+- Si la fuente no es el catálogo oficial, menciónalo con naturalidad (ej.: "No la tengo en mi catálogo, pero en pueblosoriginarios.com aparece como…").
+- Si es NO_DISPONIBLE, dilo con amabilidad y sugiere probar con otra palabra parecida.
+- Puedes cerrar, a veces, con una pregunta breve para seguir practicando.
+
+Reglas estrictas:
+- NUNCA escribas palabras o frases en maya que no vengan del resultado de `traducir` (ni saludos, ni ejemplos). Cópialas exactas.
+- Solo traducimos palabras sueltas: si piden una frase, ofrece traducir sus palabras clave.
+- Por ahora solo trabajamos español ↔ maya: si escriben en inglés, explica amablemente (en inglés y en español) que por el momento solo usamos español.
+- Si el mensaje no es sobre traducir, responde con calidez en una o dos frases que tu especialidad es el maya y sugiere: "¿cómo se dice perro en maya?"."""
 
 
 class TranslatorConnection:
@@ -43,12 +55,12 @@ class TranslatorConnection:
             await self._http.aclose()
 
 
-def build_assistant(usage: UsageStore, translator: TranslatorConnection, lang_hint: str = "español") -> TrackedAgent:
+def build_assistant(usage: UsageStore, translator: TranslatorConnection) -> TrackedAgent:
     @tool(name="traducir", description="Pide al agente traductor (vía A2A) traducir palabras sueltas.")
     async def traducir(
         palabras: Annotated[list[str], "Palabras sueltas a traducir"],
-        idioma_origen: Annotated[Literal["es", "en", "maya", "auto"], "Idioma de las palabras"] = "auto",
-        idioma_destino: Annotated[Literal["es", "en", "maya", "todos"], "Idioma al que se traduce"] = "maya",
+        idioma_origen: Annotated[Literal["es", "maya", "auto"], "Idioma de las palabras"] = "auto",
+        idioma_destino: Annotated[Literal["es", "maya"], "Idioma al que se traduce"] = "maya",
     ) -> str:
         peticion = f"Traduce de {idioma_origen} a {idioma_destino}: " + ", ".join(palabras[:10])
         agent = await translator.get()
@@ -59,7 +71,7 @@ def build_assistant(usage: UsageStore, translator: TranslatorConnection, lang_hi
 
     return TrackedAgent(
         build_chat_client(settings.assistant_model),
-        ASSISTANT_INSTRUCTIONS.format(lang_hint=lang_hint),
+        ASSISTANT_INSTRUCTIONS,
         name="asistente",
         tools=[traducir],
         default_options=default_options(),

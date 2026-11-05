@@ -3,8 +3,9 @@
 La búsqueda se hace con Python, sin gastar tokens del modelo. El modelo nunca
 traduce por su cuenta: solo puede usar lo que devuelve esta búsqueda.
 
-Formato esperado del archivo: una tabla Markdown con, al menos, las columnas
-Español | English | Maya  (Categoría y Notas son opcionales).
+Formato: una o varias tablas Markdown con, al menos, las columnas Español | Maya.
+Columnas opcionales reconocidas: Inglés, Explicación (español), Ejemplo (español),
+Ejemplo (maya), Ejemplo (inglés), Categoría, Notas.
 """
 from __future__ import annotations
 
@@ -18,6 +19,10 @@ _HEADER_ALIASES = {
     "es": {"español", "espanol", "spanish", "es"},
     "en": {"english", "inglés", "ingles", "en"},
     "maya": {"maya", "maaya", "maya yucateco", "myn", "yua"},
+    "explicacion": {"explicación (español)", "explicacion (español)", "explicación", "explicacion", "significado"},
+    "ejemplo_es": {"ejemplo (español)", "ejemplo (espanol)", "ejemplo"},
+    "ejemplo_en": {"ejemplo (inglés)", "ejemplo (ingles)"},
+    "ejemplo_maya": {"ejemplo (maya)"},
     "categoria": {"categoría", "categoria", "category"},
     "notas": {"notas", "notes", "nota"},
 }
@@ -28,13 +33,22 @@ _APOSTROPHES = "’‘ʼ´`ꞌ"
 @dataclass(frozen=True)
 class Entry:
     es: str
-    en: str
     maya: str
+    en: str = ""
+    explicacion: str = ""
+    ejemplo_es: str = ""
+    ejemplo_maya: str = ""
+    ejemplo_en: str = ""
     categoria: str = ""
     notas: str = ""
 
-    def to_dict(self) -> dict:
-        return asdict(self)
+    def to_dict(self, langs: tuple[str, ...] = LANGS) -> dict:
+        """Solo los campos útiles para los idiomas activos (menos tokens)."""
+        d = {k: v for k, v in asdict(self).items() if v}
+        if "en" not in langs:
+            d.pop("en", None)
+            d.pop("ejemplo_en", None)
+        return d
 
 
 def normalize(text: str) -> str:
@@ -42,15 +56,19 @@ def normalize(text: str) -> str:
     text = (text or "").strip().lower()
     for ch in _APOSTROPHES:
         text = text.replace(ch, "'")
-    # Quitar acentos (pero conservar la ñ) para que "árbol" == "arbol".
     out = []
     for ch in unicodedata.normalize("NFD", text):
-        if unicodedata.category(ch) == "Mn" and ch != "̃":
+        if unicodedata.category(ch) == "Mn" and ch != "̃":  # conserva la ñ
             continue
         out.append(ch)
     text = unicodedata.normalize("NFC", "".join(out))
     text = re.sub(r"^(el|la|los|las|un|una|the|a|an|to)\s+", "", text)
-    return text.strip(" .,;:!¡?¿\"()[]")
+    return re.sub(r"\s+", " ", text.strip(" .,;:!¡?¿\"«»()[]"))
+
+
+def loose(text: str) -> str:
+    """Clave tolerante: además ignora el saltillo (peek == peek')."""
+    return normalize(text).replace("'", "")
 
 
 def _variants(cell: str) -> list[str]:
@@ -59,56 +77,62 @@ def _variants(cell: str) -> list[str]:
 
 
 class Catalog:
-    def __init__(self, entries: list[Entry]):
+    def __init__(self, entries: list[Entry], langs: tuple[str, ...] = LANGS):
         self.entries = entries
+        self.langs = langs
         self._index: dict[str, dict[str, list[Entry]]] = {lang: {} for lang in LANGS}
+        self._loose: dict[str, dict[str, list[Entry]]] = {lang: {} for lang in LANGS}
         for e in entries:
             for lang in LANGS:
                 for v in _variants(getattr(e, lang)):
                     self._index[lang].setdefault(v, []).append(e)
+                    self._loose[lang].setdefault(v.replace("'", ""), []).append(e)
 
     # ------------------------------------------------------------------
     @classmethod
-    def from_markdown(cls, path: Path) -> "Catalog":
+    def from_markdown(cls, path: Path, langs: tuple[str, ...] = LANGS) -> "Catalog":
         text = Path(path).read_text(encoding="utf-8")
         entries: list[Entry] = []
         columns: dict[str, int] | None = None
         for raw in text.splitlines():
             line = raw.strip()
             if not line.startswith("|"):
-                columns = None if not line else columns
+                if line:
+                    columns = None  # fin de la tabla
                 continue
             cells = [c.strip() for c in line.strip("|").split("|")]
             if all(re.fullmatch(r":?-{2,}:?", c) for c in cells if c):
                 continue  # separador |---|---|
             if columns is None:
-                found = {}
+                found: dict[str, int] = {}
                 for i, c in enumerate(cells):
+                    label = c.lower().strip("* ")
                     for key, aliases in _HEADER_ALIASES.items():
-                        if c.lower().strip("* ") in aliases:
+                        if label in aliases and key not in found:
                             found[key] = i
-                if all(k in found for k in LANGS):
+                if "es" in found and "maya" in found:
                     columns = found
                 continue
-            get = lambda k: cells[columns[k]] if k in columns and columns[k] < len(cells) else ""  # noqa: E731
-            if get("es") and get("maya"):
-                entries.append(Entry(get("es"), get("en"), get("maya"), get("categoria"), get("notas")))
-        return cls(entries)
+            row = {k: (cells[i] if i < len(cells) else "") for k, i in columns.items()}
+            if row.get("es") and row.get("maya"):
+                entries.append(Entry(**row))
+        return cls(entries, langs)
 
     # ------------------------------------------------------------------
     def lookup(self, word: str, source: str = "auto") -> dict:
         """Busca una palabra. Devuelve un dict listo para el agente (JSON)."""
-        key = normalize(word)
-        langs = LANGS if source not in LANGS else (source,)
-        for lang in langs:
-            hits = self._index[lang].get(key)
-            if hits:
-                return {
-                    "palabra": word,
-                    "encontrada": True,
-                    "idioma_detectado": lang,
-                    "resultados": [h.to_dict() for h in hits],
-                }
+        langs = self.langs if source not in self.langs else (source,)
+        for index, key in ((self._index, normalize(word)), (self._loose, loose(word))):
+            for lang in langs:
+                hits = index[lang].get(key)
+                if hits:
+                    return {
+                        "palabra": word,
+                        "encontrada": True,
+                        "fuente": "catalogo_oficial",
+                        "idioma_detectado": lang,
+                        "resultados": [h.to_dict(self.langs) for h in hits[:3]],
+                    }
         return {"palabra": word, "encontrada": False, "resultados": []}
 
     def __len__(self) -> int:

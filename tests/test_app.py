@@ -20,6 +20,7 @@ def server(tmp_path_factory):
     os.environ.update(
         LLM_PROVIDER="fake", PORT=str(port), A2A_INTERNAL_KEY="k-interna",
         APP_ACCESS_KEY="clave", DATA_DIR=str(tmp_path_factory.mktemp("data")), MAX_MESSAGES_PER_SESSION="5",
+        RATE_LIMIT_PER_MINUTE="1000", ALLOWED_SOURCES="",
     )
     import uvicorn
 
@@ -64,3 +65,13 @@ def test_message_limit(server):
 
 def test_long_message_rejected(server):
     assert _chat(server, "x" * 1000).status_code == 400
+
+
+def test_rate_limiter_blocks_bursts():
+    from app.rate_limit import RateLimiter, client_ip
+
+    rl = RateLimiter(per_minute=3, per_hour=100)
+    assert [rl.check("1.2.3.4") for _ in range(3)] == [0, 0, 0]
+    assert rl.check("1.2.3.4") > 0
+    assert rl.check("5.6.7.8") == 0  # otra IP no se afecta
+    assert client_ip({"x-forwarded-for": "10.0.0.1:51234, 1.1.1.1"}) == "10.0.0.1"
