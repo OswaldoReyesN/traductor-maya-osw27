@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Traductor Maya</title>
+<style>
+  :root { --bg:#f6f4ef; --card:#fff; --ink:#1f2421; --muted:#6b706c; --accent:#1f6f5c; --line:#e4e0d6; --me:#e7f1ed; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#151816; --card:#1e2220; --ink:#ecefe9; --muted:#9aa19b; --accent:#5cc2a4; --line:#2d322f; --me:#20352e; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--ink); }
+  header { padding:14px 16px; border-bottom:1px solid var(--line); display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
+  header h1 { font-size:1.15rem; margin:0; }
+  header small { color:var(--muted); }
+  main { display:grid; grid-template-columns: 1fr 280px; gap:16px; padding:16px; max-width:1100px; margin:0 auto; height: calc(100vh - 56px); }
+  @media (max-width: 800px) { main { grid-template-columns: 1fr; height:auto; } }
+  .chat { background:var(--card); border:1px solid var(--line); border-radius:12px; display:flex; flex-direction:column; min-height:420px; }
+  #messages { flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:10px; }
+  .msg { max-width:85%; padding:10px 12px; border-radius:10px; white-space:pre-wrap; line-height:1.4; }
+  .msg.user { align-self:flex-end; background:var(--me); }
+  .msg.bot { align-self:flex-start; border:1px solid var(--line); }
+  .msg.err { align-self:center; color:#b3261e; font-size:.9rem; }
+  form { display:flex; gap:8px; padding:12px; border-top:1px solid var(--line); }
+  input { flex:1; padding:10px 12px; border-radius:8px; border:1px solid var(--line); background:transparent; color:var(--ink); font-size:1rem; }
+  button { padding:10px 16px; border-radius:8px; border:0; background:var(--accent); color:#fff; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:wait; }
+  aside { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; font-size:.9rem; align-self:start; }
+  aside h2 { font-size:.95rem; margin:0 0 8px; }
+  aside h3 { font-size:.8rem; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:14px 0 4px; }
+  .row { display:flex; justify-content:space-between; padding:2px 0; font-variant-numeric: tabular-nums; }
+  .row span:first-child { color:var(--muted); }
+  .hint { color:var(--muted); font-size:.8rem; margin-top:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Traductor Maya 🌽</h1>
+  <small>Español · English · Maaya t'aan — palabras sueltas del catálogo oficial</small>
+</header>
+<main>
+  <section class="chat">
+    <div id="messages">
+      <div class="msg bot">¡Ba'ax ka wa'alik! Escríbeme una o varias palabras para traducirlas, por ejemplo: <b>¿cómo se dice perro en maya?</b> o <b>what does ja' mean?</b></div>
+    </div>
+    <form id="form">
+      <input id="input" autocomplete="off" placeholder="Escribe una palabra…" maxlength="300" required>
+      <button id="send">Enviar</button>
+    </form>
+  </section>
+  <aside>
+    <h2>Consumo de tokens</h2>
+    <h3>Esta sesión</h3>
+    <div class="row"><span>Asistente</span><span id="s-asistente">0</span></div>
+    <div class="row"><span>Traductor</span><span id="s-traductor">0</span></div>
+    <div class="row"><span>Total</span><b id="s-total">0</b></div>
+    <div class="row"><span>Costo estimado</span><span id="s-cost">$0</span></div>
+    <h3>Hoy (toda la app)</h3>
+    <div class="row"><span>Tokens</span><span id="d-total">0</span></div>
+    <div class="row"><span>Costo estimado</span><span id="d-cost">$0</span></div>
+    <h3>Histórico (toda la app)</h3>
+    <div class="row"><span>Tokens</span><span id="h-total">0</span></div>
+    <div class="row"><span>Llamadas al modelo</span><span id="h-calls">0</span></div>
+    <div class="row"><span>Costo estimado</span><b id="h-cost">$0</b></div>
+    <p class="hint" id="info">Costo estimado = tokens × precio configurado del modelo.</p>
+  </aside>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const store = { get(k){ try { return sessionStorage.getItem(k); } catch { return null; } },
+                  set(k,v){ try { sessionStorage.setItem(k,v); } catch {} } };
+  let sessionId = store.get("sid") || (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2));
+  store.set("sid", sessionId);
+  let accessKey = store.get("key") || "";
+  const fmt = (n) => Number(n || 0).toLocaleString("es-MX");
+  const money = (n) => "$" + Number(n || 0).toFixed(4);
+
+  function add(text, cls) {
+    const div = document.createElement("div");
+    div.className = "msg " + cls; div.textContent = text;
+    $("messages").appendChild(div); $("messages").scrollTop = 1e9;
+  }
+  function tokens(agent) { return agent ? agent.input + agent.output : 0; }
+  function paint(c) {
+    if (!c) return;
+    $("s-asistente").textContent = fmt(tokens(c.sesion.por_agente.asistente));
+    $("s-traductor").textContent = fmt(tokens(c.sesion.por_agente.traductor));
+    $("s-total").textContent = fmt(c.sesion.total);
+    $("s-cost").textContent = money(c.sesion.costo_estimado);
+    $("d-total").textContent = fmt(c.hoy.total);
+    $("d-cost").textContent = money(c.hoy.costo_estimado);
+    $("h-total").textContent = fmt(c.historico.total);
+    const calls = Object.values(c.historico.por_agente).reduce((a, v) => a + v.calls, 0);
+    $("h-calls").textContent = fmt(calls);
+    $("h-cost").textContent = money(c.historico.costo_estimado) + " " + c.historico.moneda;
+  }
+  async function api(path, opts = {}) {
+    const r = await fetch(path, { ...opts, headers: { "Content-Type": "application/json", "X-Access-Key": accessKey, ...(opts.headers || {}) } });
+    const data = await r.json().catch(() => ({}));
+    if (r.status === 401) { accessKey = ""; store.set("key", ""); }
+    if (!r.ok) throw new Error(data.detail || "Error " + r.status);
+    return data;
+  }
+  async function init() {
+    const cfg = await api("/api/config");
+    $("input").maxLength = cfg.max_caracteres;
+    $("info").textContent = `Catálogo: ${cfg.palabras_en_catalogo} palabras · Modelo: ${cfg.modelo}. Costo estimado = tokens × precio configurado.`;
+    if (cfg.requiere_clave && !accessKey) {
+      accessKey = (prompt("Clave de acceso a la app:") || "").trim();
+      store.set("key", accessKey);
+    }
+    try { paint(await api("/api/usage?session_id=" + encodeURIComponent(sessionId))); } catch (e) { add(e.message, "err"); }
+  }
+  $("form").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const text = $("input").value.trim(); if (!text) return;
+    add(text, "user"); $("input").value = ""; $("send").disabled = true;
+    try {
+      const data = await api("/api/chat", { method: "POST", body: JSON.stringify({ session_id: sessionId, message: text }) });
+      add(data.respuesta, "bot"); paint(data.consumo);
+    } catch (e) {
+      add(e.message, "err");
+      if (!accessKey) { accessKey = (prompt("Clave de acceso a la app:") || "").trim(); store.set("key", accessKey); }
+    } finally { $("send").disabled = false; $("input").focus(); }
+  });
+  init().catch((e) => add(e.message, "err"));
+</script>
+</body>
+</html>
